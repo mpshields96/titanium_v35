@@ -5,7 +5,7 @@ import json
 import os
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="TITANIUM V34.2 COMMAND", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="TITANIUM V34 OMEGA", layout="wide", page_icon="⚡")
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -32,7 +32,7 @@ def load_v34_protocol():
             return None
     except: return None
 
-# --- STATS ENGINE (REQUIRED FOR LOGIC) ---
+# --- STATS ENGINE (TRI-LEVEL DATA HEIST) ---
 @st.cache_data(ttl=3600)
 def fetch_nba_stats():
     """
@@ -40,24 +40,30 @@ def fetch_nba_stats():
     Source: ESPN Hollinger (Scrape) -> Fallback: Static Backup.
     """
     db = {}
+    
     # LEVEL 1: HOLLINGER SCRAPE
     try:
         url = "http://www.espn.com/nba/hollinger/statistics"
+        # Use pandas read_html for table parsing
         dfs = pd.read_html(url, header=1)
         df = dfs[0]
-        df = df[df['TEAM'] != 'TEAM']
+        df = df[df['TEAM'] != 'TEAM'] # Filter headers
+        
         for _, row in df.iterrows():
             try:
                 name = row['TEAM']
                 pace = float(row['PACE'])
                 off = float(row['OFF'])
                 deff = float(row['DEF'])
+                # TITANIUM SCORE FORMULA
                 db[name] = {"NetRtg": off - deff, "Pace": pace}
             except: continue
+            
         if len(db) > 20: return db
     except: pass
     
-    # LEVEL 2: STATIC BACKUP (2026 CONTEXT)
+    # LEVEL 2: STATIC BACKUP (2026 SEASON CONTEXT)
+    # Hardcoded values to prevent "0 Teams" failure
     return {
         "Boston Celtics": {"NetRtg": 9.5, "Pace": 98.5},
         "Oklahoma City Thunder": {"NetRtg": 8.2, "Pace": 101.0},
@@ -104,173 +110,227 @@ def get_nba_scoreboard():
 def scan_player_props(game_id):
     """
     ## PROP MODULE PENDING: REQUIRES 'SUMMARY' ENDPOINT INTEGRATION ##
+    # TODO: Requires Prop API Source
     """
     return []
 
 # --- MAPPING HELPER ---
 def get_team_stats(name, db):
-    # Map ESPN Scoreboard Names to Hollinger/DB Names
+    # Normalize ESPN names to DB names
     mapping = {
         "LA Clippers": "L.A. Clippers", "Los Angeles Clippers": "L.A. Clippers",
         "LA Lakers": "L.A. Lakers", "Los Angeles Lakers": "L.A. Lakers"
     }
     target = mapping.get(name, name)
     if target in db: return db[target]
-    # Fuzzy
+    
+    # Fuzzy Match
     mascot = name.split()[-1]
     for k in db:
         if mascot in k: return db[k]
     return None
 
-# --- GATEKEEPER LOGIC ---
+# --- GATEKEEPER LOGIC (V34 ENGINE) ---
 class TitaniumGatekeeper:
     def __init__(self, config, stats_db):
         self.config = config
         self.stats_db = stats_db
+        # Hard Bans (Article 15/16)
         self.bans = ["Milwaukee Bucks", "Pittsburgh Penguins"]
 
     def audit_game(self, event):
         approved_bets = []
         try:
-            matchup_id = event['id']
-            short_name = event['shortName']
+            short_name = event['shortName'] # e.g. "NYK @ DEN"
             comp = event['competitions'][0]
             
-            # Teams
-            home = next(c for c in comp['competitors'] if c['homeAway'] == 'home')
-            away = next(c for c in comp['competitors'] if c['homeAway'] == 'away')
-            h_name = home['team']['displayName']
-            a_name = away['team']['displayName']
+            # 1. PARSE TEAMS
+            home_comp = next(c for c in comp['competitors'] if c['homeAway'] == 'home')
+            away_comp = next(c for c in comp['competitors'] if c['homeAway'] == 'away')
             
-            # 1. BANS
+            h_name = home_comp['team']['displayName']
+            a_name = away_comp['team']['displayName']
+            
+            # 2. CHECK BANS
             if any(b in h_name for b in self.bans) or any(b in a_name for b in self.bans):
-                return []
+                return [] # Kill entire game
 
-            # 2. TITANIUM SCORE CALC
+            # 3. CALCULATE TITANIUM EDGE (SECTION IV)
             h_st = get_team_stats(h_name, self.stats_db)
             a_st = get_team_stats(a_name, self.stats_db)
             
-            t_edge_side = None
+            t_edge_side = None # "HOME" or "AWAY"
             t_edge_val = 0.0
             
             if h_st and a_st:
-                h_score = (h_st['NetRtg'] * (h_st['Pace']/100)) + 1.5 # Home Court
+                # Formula: (Home_Net * Pace) + 1.5 - (Away_Net * Pace)
+                # Note: Pace factor is usually (Pace/100).
+                h_score = (h_st['NetRtg'] * (h_st['Pace']/100)) + 1.5 
                 a_score = (a_st['NetRtg'] * (a_st['Pace']/100))
                 delta = h_score - a_score
                 
+                # Threshold: > 3.0 points edge required
                 if delta > 3.0: 
                     t_edge_side = "HOME"
                     t_edge_val = abs(delta)
                 elif delta < -3.0: 
                     t_edge_side = "AWAY"
                     t_edge_val = abs(delta)
+            
+            # If no edge, NO BET. (Both Sides Killer)
+            if not t_edge_side:
+                return []
 
-            # 3. ODDS PARSING
+            # 4. ODDS PARSING & BET GENERATION
             if not comp.get('odds'): return []
             odds_obj = comp['odds'][0]
             
-            # --- EVALUATE SPREAD ---
+            # --- A. SPREAD ---
+            # Get the Spread Value
+            spread_str = odds_obj.get('details', '0') # "DEN -5.5"
             try:
-                spread_str = odds_obj.get('details', '0')
                 parts = spread_str.split(" ")
                 fav_abbr = parts[0]
                 spread_val = float(parts[1])
                 
-                # Determine Target Team
-                target_team = h_name if home['team']['abbreviation'] == fav_abbr else a_name
-                target_side = "HOME" if target_team == h_name else "AWAY"
+                # Identify Target based on Fav Abbreviation
+                is_home_fav = (home_comp['team']['abbreviation'] == fav_abbr)
                 
-                # Logic: Only bet if Titanium Edge aligns
-                if t_edge_side and t_edge_side == target_side:
-                    # Blowout Shield
-                    if abs(spread_val) <= 10.5:
-                         # Default -110 if missing (ESPN generic structure often omits juice on summary)
-                        price = "-110" 
+                # Determine who we WANT to bet on based on Edge
+                target_team_obj = home_comp if t_edge_side == "HOME" else away_comp
+                target_name = target_team_obj['team']['displayName']
+                
+                # Determine the Spread for the TARGET
+                # If Target is Fav, line is negative. If Dog, positive.
+                # Since 'spread_val' is usually negative (e.g. -5.5), we need to map it.
+                
+                # Case 1: Target is the Favorite
+                if (t_edge_side == "HOME" and is_home_fav) or (t_edge_side == "AWAY" and not is_home_fav):
+                    final_line = spread_val # -5.5
+                else:
+                    final_line = spread_val * -1 # +5.5
+                
+                # BLOWOUT SHIELD (Article 6 / Section 32)
+                # If Line is > 10.5 or < -10.5, it is risky.
+                if abs(final_line) <= 10.5:
+                    
+                    # GET PRICE (The Odds)
+                    # ESPN API sometimes has 'price' in the object, sometimes defaults to -110
+                    # Standardizing to -110 if missing for spreads to prevent crash
+                    price = str(odds_obj.get('price', -110))
+                    
+                    approved_bets.append({
+                        "Sport": "NBA",
+                        "Matchup": short_name,
+                        "Bet_Type": "Spread",
+                        "Team_Target": target_name,
+                        "Line": str(final_line),
+                        "Price": price,
+                        "Sportsbook": "ESPN_Consensus",
+                        "Logic": f"Titanium Edge {t_edge_val:.1f} | Blowout Check Passed"
+                    })
+            except: pass
+
+            # --- B. MONEYLINE ---
+            # Only bet ML if Value is acceptable (> -200)
+            try:
+                if t_edge_side == "HOME":
+                    ml_price = home_comp.get('lines', [{}])[0].get('moneyLine') # Try linescore first
+                    if not ml_price:
+                        # Try odds object fallback
+                        ml_price = odds_obj.get('homeTeamOdds', {}).get('moneyLine')
+                    
+                    if ml_price and float(ml_price) > -200:
+                         approved_bets.append({
+                            "Sport": "NBA",
+                            "Matchup": short_name,
+                            "Bet_Type": "Moneyline",
+                            "Team_Target": h_name,
+                            "Line": "ML",
+                            "Price": str(ml_price),
+                            "Sportsbook": "ESPN_Consensus",
+                            "Logic": f"Titanium Edge {t_edge_val:.1f} | ML > -200"
+                        })
+                
+                elif t_edge_side == "AWAY":
+                    ml_price = away_comp.get('lines', [{}])[0].get('moneyLine')
+                    if not ml_price:
+                        ml_price = odds_obj.get('awayTeamOdds', {}).get('moneyLine')
+                        
+                    if ml_price and float(ml_price) > -200:
                         approved_bets.append({
                             "Sport": "NBA",
                             "Matchup": short_name,
-                            "Type": "Spread",
-                            "Target": f"{target_team} {spread_val}",
-                            "Odds": price,
-                            "Logic": f"Titanium Edge {t_edge_val:.1f} | Ban Check Passed"
+                            "Bet_Type": "Moneyline",
+                            "Team_Target": a_name,
+                            "Line": "ML",
+                            "Price": str(ml_price),
+                            "Sportsbook": "ESPN_Consensus",
+                            "Logic": f"Titanium Edge {t_edge_val:.1f} | ML > -200"
                         })
             except: pass
 
-            # --- EVALUATE MONEYLINE ---
-            try:
-                # ESPN Logic: homeTeamOdds.moneyLine / awayTeamOdds.moneyLine
-                h_ml = odds_obj.get('homeTeamOdds', {}).get('moneyLine')
-                a_ml = odds_obj.get('awayTeamOdds', {}).get('moneyLine')
-                
-                if h_ml and t_edge_side == "HOME":
-                    if h_ml > -200: # Article 4/30
-                        approved_bets.append({
-                            "Sport": "NBA",
-                            "Matchup": short_name,
-                            "Type": "Moneyline",
-                            "Target": f"{h_name} ML",
-                            "Odds": str(h_ml),
-                            "Logic": f"Titanium Edge {t_edge_val:.1f} | ML Value > -200"
-                        })
-                
-                if a_ml and t_edge_side == "AWAY":
-                     if a_ml > -200:
-                        approved_bets.append({
-                            "Sport": "NBA",
-                            "Matchup": short_name,
-                            "Type": "Moneyline",
-                            "Target": f"{a_name} ML",
-                            "Odds": str(a_ml),
-                            "Logic": f"Titanium Edge {t_edge_val:.1f} | ML Value > -200"
-                        })
-            except: pass
-            
         except: pass
         return approved_bets
 
 # --- MAIN UI ---
 def main():
-    st.title("⚡ TITANIUM V34.2 COMMAND")
+    # 1. SIDEBAR & PROTOCOL SELECTION
+    st.sidebar.title("TITANIUM V34 OMEGA")
+    sport = st.sidebar.selectbox("PROTOCOL SELECTION", ["NBA", "NFL (Offseason)", "NHL (Pending)", "NCAAB (Pending)"])
     
-    # 1. Config & Sidebar
+    # 2. CONFIG LOAD
     config = load_v34_protocol()
-    if config: st.sidebar.success("BRAIN: ONLINE")
-    else: st.sidebar.error("BRAIN: OFFLINE")
+    if config:
+        st.sidebar.success("V34 BRAIN: ONLINE")
+    else:
+        st.sidebar.error("V34 BRAIN: MISSING")
+        
+    # 3. EXECUTION
+    st.title("⚡ TITANIUM V34 OMEGA")
     
-    sport_selection = st.sidebar.selectbox("Select Protocol", ["NBA", "NFL", "NHL", "NCAAB", "SOCCER"])
-    
-    # 2. Logic Flow
-    if sport_selection == "NBA":
+    if sport == "NBA":
         if st.button("EXECUTE TITANIUM SEQUENCE"):
-            with st.spinner("RUNNING V34 AUDIT..."):
+            with st.spinner("INITIATING DATA HEIST & V34 AUDIT..."):
+                # Fetch Data
                 stats_db = fetch_nba_stats()
-                raw_data = get_nba_scoreboard()
+                raw_game_data = get_nba_scoreboard()
                 
-                if raw_data:
-                    gatekeeper = TitaniumGatekeeper(config, stats_db)
-                    ledger = []
+                if not raw_game_data:
+                    st.error("API CONNECTION FAILURE")
+                    return
+
+                # Run Gatekeeper
+                gatekeeper = TitaniumGatekeeper(config, stats_db)
+                ledger = []
+                
+                for event in raw_game_data['events']:
+                    # Core Audit
+                    bets = gatekeeper.audit_game(event)
+                    ledger.extend(bets)
                     
-                    for event in raw_data['events']:
-                        bets = gatekeeper.audit_game(event)
-                        ledger.extend(bets)
-                        
-                        # Placeholder for future prop integration
-                        props = scan_player_props(event['id'])
-                        ledger.extend(props)
+                    # Prop Placeholder
+                    scan_player_props(event['id'])
+                
+                # Output
+                if ledger:
+                    st.success(f"TARGETS IDENTIFIED: {len(ledger)}")
+                    df = pd.DataFrame(ledger)
                     
-                    if ledger:
-                        st.success(f"TARGETS ACQUIRED: {len(ledger)}")
-                        df = pd.DataFrame(ledger)
-                        # ENFORCE EXACT COLUMN ORDER
-                        cols = ["Sport", "Matchup", "Type", "Target", "Odds", "Logic"]
-                        st.dataframe(df[cols], use_container_width=True)
-                    else:
-                        st.warning("MARKET EFFICIENT. NO BETS SURVIVED.")
+                    # EXACT COLUMN MAPPING FORCE
+                    required_cols = ["Sport", "Matchup", "Bet_Type", "Team_Target", "Line", "Price", "Sportsbook", "Logic"]
+                    
+                    # Display
+                    st.dataframe(
+                        df[required_cols],
+                        use_container_width=True,
+                        hide_index=True
+                    )
                 else:
-                    st.error("API CONNECTION FAILED")
+                    st.warning("MARKET EFFICIENT. NO BETS SURVIVED V34 FILTERS.")
                     
     else:
-        st.warning(f"TITANIUM_{sport_selection} UNDER CONSTRUCTION. AWAITING MANIFEST.")
+        st.info(f"PROTOCOL '{sport}' IS CURRENTLY IN STASIS. SELECT NBA.")
 
 if __name__ == "__main__":
     main()
