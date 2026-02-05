@@ -10,7 +10,7 @@ import pytz
 ODDS_API_KEY = "01dc7be6ca076e6b79ac4f54001d142d"
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="TITANIUM V34.10 OMEGA", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="TITANIUM V34.11 STRICT", layout="wide", page_icon="⚡")
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -60,43 +60,37 @@ class OddsAPIEngine:
         self.key = api_key
         self.base = "https://api.the-odds-api.com/v4/sports"
     
-    # --- GENERIC FETCHERS ---
+    # --- FETCHERS ---
     def fetch_events(self, sport_key):
-        """Get Game IDs."""
         url = f"{self.base}/{sport_key}/events?apiKey={self.key}&regions=us&markets=h2h"
         try: return requests.get(url).json()
         except: return []
 
     def fetch_batch_odds(self, sport_key):
-        """Get Lines for ALL games in one call (NCAAB/NHL)."""
-        # Markets: h2h (ML), spreads, totals
         url = f"{self.base}/{sport_key}/odds?apiKey={self.key}&regions=us&markets=h2h,spreads,totals&oddsFormat=american"
         try: return requests.get(url).json()
         except: return []
 
     def fetch_game_props_nba(self, event_id):
-        """Get Props for specific NBA game."""
         url = f"{self.base}/basketball_nba/events/{event_id}/odds?apiKey={self.key}&regions=us&markets=h2h,spreads,totals,player_points&oddsFormat=american"
         try: return requests.get(url).json()
         except: return None
 
     # --- PARSERS ---
     def parse_nba_game(self, data, h_team, a_team, stats_db):
-        """Extracts NBA Bets (Spread, ML, Totals, Props)."""
+        """NBA: Props + Spread/Total Logic."""
         ledger = []
         bookmakers = data.get('bookmakers', [])
         if not bookmakers: return []
-        dk_book = next((b for b in bookmakers if b['key'] == 'draftkings'), bookmakers[0]) # Target DK
+        dk_book = next((b for b in bookmakers if b['key'] == 'draftkings'), bookmakers[0])
 
-        # Stats
         h_st = get_nba_team_stats(h_team, stats_db)
         a_st = get_nba_team_stats(a_team, stats_db)
         if not h_st: h_st = {"DefRtg": 110, "Pace": 98, "NetRtg": 0}
         if not a_st: a_st = {"DefRtg": 110, "Pace": 98, "NetRtg": 0}
 
         for market in dk_book.get('markets', []):
-            
-            # 1. SPREADS
+            # SPREADS
             if market['key'] == 'spreads':
                 for outcome in market['outcomes']:
                     team, line, price = outcome['name'], outcome['point'], outcome['price']
@@ -110,38 +104,22 @@ class OddsAPIEngine:
                             "Sport": "NBA", "Type": "Spread", "Target": team, "Line": line, "Price": price, "Book": dk_book['title'],
                             "Audit_Directive": f"AUDIT: Confirm NetRtg Edge ({abs(proj_margin):.1f}). Check Rest."
                         })
-
-            # 2. MONEYLINE
-            elif market['key'] == 'h2h':
-                for outcome in market['outcomes']:
-                    team, price = outcome['name'], outcome['price']
-                    if -200 <= price <= 150:
-                        fav = h_team if (h_st['NetRtg'] + 1.5) > a_st['NetRtg'] else a_team
-                        if team == fav:
-                            ledger.append({
-                                "Sport": "NBA", "Type": "Moneyline", "Target": team, "Line": "ML", "Price": price, "Book": dk_book['title'],
-                                "Audit_Directive": "AUDIT: Verify Injury Report for Key Starters."
-                            })
-            
-            # 3. TOTALS (NEW)
+            # TOTALS
             elif market['key'] == 'totals':
                 for outcome in market['outcomes']:
                     side, line, price = outcome['name'], outcome['point'], outcome['price']
-                    # V34 LOGIC: EXTREME PACE ONLY
                     combined_pace = h_st['Pace'] + a_st['Pace']
-                    
                     if side == "Over" and combined_pace > 202.0:
                         ledger.append({
                             "Sport": "NBA", "Type": "Total", "Target": f"{h_team}/{a_team}", "Line": f"O {line}", "Price": price, "Book": dk_book['title'],
-                            "Audit_Directive": f"PACE ALERT: Combined Pace {combined_pace:.1f} (Track Meet)."
+                            "Audit_Directive": f"PACE ALERT: Combined Pace {combined_pace:.1f}."
                         })
                     elif side == "Under" and combined_pace < 194.0:
                         ledger.append({
                             "Sport": "NBA", "Type": "Total", "Target": f"{h_team}/{a_team}", "Line": f"U {line}", "Price": price, "Book": dk_book['title'],
-                            "Audit_Directive": f"SLUDGE ALERT: Combined Pace {combined_pace:.1f} (Slow Grind)."
+                            "Audit_Directive": f"SLUDGE ALERT: Combined Pace {combined_pace:.1f}."
                         })
-
-            # 4. PLAYER PROPS
+            # PROPS
             elif market['key'] == 'player_points':
                 for outcome in market['outcomes']:
                     player, side, line, price = outcome['description'], outcome['name'], outcome['point'], outcome['price']
@@ -149,7 +127,6 @@ class OddsAPIEngine:
                         msg = ""
                         if h_st['DefRtg'] > 114: msg = f"Target vs {h_team} (DefRtg {h_st['DefRtg']})"
                         elif a_st['DefRtg'] > 114: msg = f"Target vs {a_team} (DefRtg {a_st['DefRtg']})"
-                        
                         if msg:
                              ledger.append({
                                 "Sport": "NBA", "Type": "Player Prop", "Target": player, "Line": f"Over {line}", "Price": price, "Book": dk_book['title'],
@@ -158,8 +135,8 @@ class OddsAPIEngine:
         return ledger
 
     def parse_ncaab_batch(self, games):
-        """Parses NCAAB Spreads using Closers Metric."""
-        ledger = []
+        """NCAAB: STRICT CLOSERS ONLY (Top 10)."""
+        candidates = []
         for game in games:
             bookmakers = game.get('bookmakers', [])
             if not bookmakers: continue
@@ -174,63 +151,84 @@ class OddsAPIEngine:
                     for outcome in market['outcomes']:
                         team, line, price = outcome['name'], outcome['point'], outcome['price']
                         
-                        # V34 LOGIC: CLOSERS METRIC
-                        # Small Favorites (-0.5 to -4.5) need FT% Audit
+                        # V34 LOGIC: STRICT "CLOSERS METRIC" ONLY
+                        # Must be a Small Favorite (-0.5 to -4.5) OR a Home Dog > +4
+                        # FILTER 1: The Choke Zone (-0.5 to -4.5)
                         if -4.5 <= line <= -0.5 and price > -180:
-                            ledger.append({
+                            candidates.append({
                                 "Sport": "NCAAB", "Time": time_str, "Matchup": matchup, "Type": "Spread", 
                                 "Target": team, "Line": line, "Price": price, "Book": dk_book['title'],
-                                "Audit_Directive": "⚠️ CLOSERS METRIC: Audit FT% > 71%."
+                                "Audit_Directive": "⚠️ CLOSERS METRIC: Small Fav. Audit FT%."
                             })
-                        # Generic Value (Standard Spread)
-                        elif price >= -115: # Only 'Cheap' lines
-                             ledger.append({
-                                "Sport": "NCAAB", "Time": time_str, "Matchup": matchup, "Type": "Spread", 
-                                "Target": team, "Line": line, "Price": price, "Book": dk_book['title'],
-                                "Audit_Directive": "V34 Spread Value."
-                            })
-        return ledger
+                        
+        # HARD CAP: TOP 10 (To prevent "Too Many Lines")
+        # Sort by Time? Or just slice.
+        return candidates[:10]
 
     def parse_nhl_batch(self, games):
-        """Parses NHL using Puck Line Safety."""
-        ledger = []
+        """NHL: EFFICIENCY GUILLOTINE (No Coin Flips)."""
+        raw_ledger = []
+        
         for game in games:
             bookmakers = game.get('bookmakers', [])
             if not bookmakers: continue
             dk_book = next((b for b in bookmakers if b['key'] == 'draftkings'), bookmakers[0])
             
             h_team, a_team = game['home_team'], game['away_team']
-            if "Penguins" in h_team or "Penguins" in a_team: continue # BAN
+            # BAN
+            if "Penguins" in h_team or "Penguins" in a_team: continue 
 
             time_str = format_time(game['commence_time'])
             matchup = f"{a_team} @ {h_team}"
+            game_id = game['id']
 
-            # We need ML to determine PL strategy
             ml_market = next((m for m in dk_book['markets'] if m['key'] == 'h2h'), None)
-            pl_market = next((m for m in dk_book['markets'] if m['key'] == 'spreads'), None) # NHL Spread is PL
+            pl_market = next((m for m in dk_book['markets'] if m['key'] == 'spreads'), None) # PL
+
+            game_bets = []
 
             if ml_market:
                 for outcome in ml_market['outcomes']:
                     team, price = outcome['name'], outcome['price']
                     
-                    # LOGIC: If ML < -200, Force Puck Line
+                    # LOGIC 1: PUCK LINE FORCE (Heavy Favs)
                     if price < -200 and pl_market:
-                        # Find corresponding PL
                         pl_outcome = next((o for o in pl_market['outcomes'] if o['name'] == team), None)
                         if pl_outcome:
-                            ledger.append({
-                                "Sport": "NHL", "Time": time_str, "Matchup": matchup, "Type": "Puck Line", 
+                            game_bets.append({
+                                "GameID": game_id, "Sport": "NHL", "Time": time_str, "Matchup": matchup, "Type": "Puck Line", 
                                 "Target": team, "Line": pl_outcome['point'], "Price": pl_outcome['price'], "Book": dk_book['title'],
-                                "Audit_Directive": "SAFETY VALVE: ML too expensive. Confirm Goalie."
+                                "Audit_Directive": "SAFETY VALVE: ML expensive. Confirm Goalie."
                             })
-                    # LOGIC: Value ML
-                    elif -175 <= price <= 140:
-                        ledger.append({
-                            "Sport": "NHL", "Time": time_str, "Matchup": matchup, "Type": "Moneyline", 
+                    
+                    # LOGIC 2: VALUE DOGS / STRICT FAVS
+                    # Only accept if price implies a decision, not a coin flip.
+                    # Acceptable: +130 or better (Value Dog).
+                    # Acceptable: -140 to -175 (Strong Fav, but not PL territory).
+                    # REJECT: -115 to +110 (Coin Flip).
+                    elif (price >= 130) or (-175 <= price <= -140):
+                        game_bets.append({
+                            "GameID": game_id, "Sport": "NHL", "Time": time_str, "Matchup": matchup, "Type": "Moneyline", 
                             "Target": team, "Line": "ML", "Price": price, "Book": dk_book['title'],
-                            "Audit_Directive": "VALUE ML: Verify Starting Goalie > .910 SV%."
+                            "Audit_Directive": "VALUE PLAY: Market Inefficiency Detected."
                         })
-        return ledger
+            
+            raw_ledger.extend(game_bets)
+
+        # GUILLOTINE: If we have bets on BOTH sides of the same game, KILL BOTH.
+        # This solves the "Messy / Double Betting" issue.
+        clean_ledger = []
+        game_ids = [b['GameID'] for b in raw_ledger]
+        from collections import Counter
+        counts = Counter(game_ids)
+        
+        for bet in raw_ledger:
+            if counts[bet['GameID']] == 1:
+                # Remove internal ID before display
+                del bet['GameID']
+                clean_ledger.append(bet)
+        
+        return clean_ledger
 
 # --- NBA STATS ENGINE ---
 @st.cache_data(ttl=3600)
@@ -272,23 +270,23 @@ def fetch_nba_stats():
 
 # --- MAIN UI ---
 def main():
-    st.sidebar.title("TITANIUM V34.10 OMEGA")
+    st.sidebar.title("TITANIUM V34.11 OMEGA")
     sport = st.sidebar.selectbox("PROTOCOL SELECTION", ["NBA", "NCAAB", "NHL"])
     
     odds_engine = OddsAPIEngine(ODDS_API_KEY)
-    st.title(f"⚡ TITANIUM V34.10 | {sport}")
+    st.title(f"⚡ TITANIUM V34.11 | {sport}")
     
     if st.button(f"EXECUTE {sport} SEQUENCE"):
         with st.spinner(f"SCANNING {sport} MARKETS (DraftKings Live Data)..."):
             
-            # NBA: Deep Scan (Props + Spreads)
+            # NBA
             if sport == "NBA":
                 stats_db = fetch_nba_stats()
                 events = odds_engine.fetch_events("basketball_nba")
                 ledger = []
                 if events:
                     for event in events:
-                        data = odds_engine.fetch_game_props_nba(event['id']) # Deep Call
+                        data = odds_engine.fetch_game_props_nba(event['id'])
                         if data:
                             bets = odds_engine.parse_nba_game(data, event['home_team'], event['away_team'], stats_db)
                             time_str = format_time(event['commence_time'])
@@ -298,12 +296,12 @@ def main():
                                 bet['Matchup'] = matchup
                                 ledger.append(bet)
 
-            # NCAAB: Batch Scan (Spreads Only - Save Quota)
+            # NCAAB (Strict)
             elif sport == "NCAAB":
                 raw_data = odds_engine.fetch_batch_odds("basketball_ncaab")
                 ledger = odds_engine.parse_ncaab_batch(raw_data)
 
-            # NHL: Batch Scan (Lines Only - Save Quota)
+            # NHL (Efficient)
             elif sport == "NHL":
                 raw_data = odds_engine.fetch_batch_odds("icehockey_nhl")
                 ledger = odds_engine.parse_nhl_batch(raw_data)
