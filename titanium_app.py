@@ -10,7 +10,7 @@ import pytz
 ODDS_API_KEY = "01dc7be6ca076e6b79ac4f54001d142d"
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="TITANIUM V34.14 SUPER BOWL", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="TITANIUM V34.15 SNIPER", layout="wide", page_icon="⚡")
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -44,7 +44,7 @@ def format_time(iso_string):
         return cst.strftime("%I:%M %p")
     except: return "TBD"
 
-# --- HELPER: TEAM MAPPING (NBA) ---
+# --- HELPER: TEAM MAPPING ---
 def get_nba_team_stats(name, db):
     mapping = {"LA Clippers": "L.A. Clippers", "Los Angeles Clippers": "L.A. Clippers", "LA Lakers": "L.A. Lakers", "Los Angeles Lakers": "L.A. Lakers"}
     target = mapping.get(name, name)
@@ -77,15 +77,94 @@ class OddsAPIEngine:
         except: return None
 
     def fetch_game_props_nfl(self, event_id):
-        """Fetches NFL Spreads, Totals, and Yardage Props."""
-        # Markets: h2h, spreads, totals, player_pass_yds, player_rush_yds, player_reception_yds
         url = f"{self.base}/americanfootball_nfl/events/{event_id}/odds?apiKey={self.key}&regions=us&markets=h2h,spreads,totals,player_pass_yds,player_rush_yds,player_reception_yds&oddsFormat=american"
         try: return requests.get(url).json()
         except: return None
 
     # --- PARSERS ---
+    
+    def parse_nfl_game(self, data):
+        """NFL: STRICT CRITERIA (No Redundancy)."""
+        ledger = []
+        bookmakers = data.get('bookmakers', [])
+        if not bookmakers: return []
+        dk_book = next((b for b in bookmakers if b['key'] == 'draftkings'), bookmakers[0])
+
+        # Track Lines to prevent ML/Spread Duplication
+        bet_types_logged = [] # e.g. ["Chiefs_Spread"]
+
+        current_spread_val = 0 # For Blowout Shield
+
+        for market in dk_book.get('markets', []):
+            
+            # 1. SPREAD (Priority: Key Numbers)
+            if market['key'] == 'spreads':
+                for outcome in market['outcomes']:
+                    team, line, price = outcome['name'], outcome['point'], outcome['price']
+                    current_spread_val = abs(line)
+                    
+                    if -180 <= price <= 150:
+                        # CRITERIA: ONLY Key Numbers (2.5, 3, 3.5, 6.5, 7, 7.5)
+                        if abs(line) in [2.5, 3.0, 3.5, 6.5, 7.0, 7.5]:
+                            ledger.append({
+                                "Sport": "NFL", "Type": "Spread", "Target": team, "Line": line, "Price": price, 
+                                "Book": dk_book['title'], "Audit_Directive": f"⚠️ KEY NUMBER ({line}): Shop for Hook."
+                            })
+                            bet_types_logged.append(f"{team}_Main")
+
+            # 2. MONEYLINE (Secondary: Value Only)
+            elif market['key'] == 'h2h':
+                for outcome in market['outcomes']:
+                    team, price = outcome['name'], outcome['price']
+                    # CRITERIA: Don't log if we already have a Spread bet for this team (Avoid redundancy)
+                    if f"{team}_Main" not in bet_types_logged:
+                        # Value Dog (+130 to +150) OR Safe Fav (-150 to -120)
+                        if (130 <= price <= 150) or (-150 <= price <= -120):
+                            ledger.append({
+                                "Sport": "NFL", "Type": "Moneyline", "Target": team, "Line": "ML", "Price": price, 
+                                "Book": dk_book['title'], "Audit_Directive": "VALUE PLAY: Market Inefficiency."
+                            })
+
+            # 3. TOTALS (Value Only)
+            elif market['key'] == 'totals':
+                for outcome in market['outcomes']:
+                    side, line, price = outcome['name'], outcome['point'], outcome['price']
+                    # CRITERIA: Only list if Price is Positive (Avoid Juice)
+                    if price >= 100 and price <= 150:
+                        ledger.append({
+                            "Sport": "NFL", "Type": "Total", "Target": "Game Total", "Line": f"{side} {line}", "Price": price, 
+                            "Book": dk_book['title'], "Audit_Directive": "💨 WEATHER CHECK: Wind > 15mph?"
+                        })
+
+            # 4. PLAYER PROPS (Starters Only)
+            elif market['key'] in ['player_pass_yds', 'player_rush_yds', 'player_reception_yds']:
+                prop_type = market['key'].replace('player_', '').replace('_yds', ' Yds').title()
+                for outcome in market['outcomes']:
+                    player, side, line, price = outcome['description'], outcome['name'], outcome['point'], outcome['price']
+                    
+                    if side == "Over" and -180 <= price <= 150:
+                        # GARBAGE SHIELD
+                        if current_spread_val > 10.5: continue # Kill all overs in blowout risk
+
+                        # VOLUME FILTER (Starters Only)
+                        valid = False
+                        if prop_type == "Pass Yds" and line > 225.0: valid = True # QB1
+                        if prop_type == "Rush Yds" and line > 45.0: valid = True # RB1
+                        if prop_type == "Reception Yds" and line > 45.0: valid = True # WR1/TE1
+                        
+                        if valid:
+                            directive = "V34 Prop Value."
+                            if prop_type == "Pass Yds": directive = "AUDIT: Check Wind/Precip."
+                            
+                            ledger.append({
+                                "Sport": "NFL", "Type": prop_type, "Target": player, "Line": f"Over {line}", "Price": price, 
+                                "Book": dk_book['title'], "Audit_Directive": directive
+                            })
+
+        return ledger
+
     def parse_nba_game(self, data, h_team, a_team, stats_db):
-        """NBA: Props + Spread/Total Logic (MAINTAINED)."""
+        """NBA: STRICT ODDS COLLAR (PRESERVED)."""
         ledger = []
         bookmakers = data.get('bookmakers', [])
         if not bookmakers: return []
@@ -126,88 +205,16 @@ class OddsAPIEngine:
                              ledger.append({"Sport": "NBA", "Type": "Player Prop", "Target": player, "Line": f"Over {line}", "Price": price, "Book": dk_book['title'], "Audit_Directive": f"KOTC: {msg}. Verify Usage."})
         return ledger
 
-    def parse_nfl_game(self, data):
-        """NFL: Spreads, Totals, Yards (Pass/Rush/Rec)."""
-        ledger = []
-        bookmakers = data.get('bookmakers', [])
-        if not bookmakers: return []
-        dk_book = next((b for b in bookmakers if b['key'] == 'draftkings'), bookmakers[0])
-
-        current_spread_val = 0 # Track for Blowout Shield
-
-        for market in dk_book.get('markets', []):
-            
-            # 1. SPREAD (Key Number Audit)
-            if market['key'] == 'spreads':
-                for outcome in market['outcomes']:
-                    team, line, price = outcome['name'], outcome['point'], outcome['price']
-                    current_spread_val = abs(line)
-                    
-                    if -180 <= price <= 150:
-                        directive = "V34 Value."
-                        # KEY NUMBERS: 3, 7
-                        if abs(line) in [2.5, 3.0, 3.5, 6.5, 7.0, 7.5]:
-                            directive = f"⚠️ KEY NUMBER ({line}): Shop for Hook."
-                        
-                        ledger.append({
-                            "Sport": "NFL", "Type": "Spread", "Target": team, "Line": line, "Price": price, 
-                            "Book": dk_book['title'], "Audit_Directive": directive
-                        })
-
-            # 2. MONEYLINE
-            elif market['key'] == 'h2h':
-                for outcome in market['outcomes']:
-                    team, price = outcome['name'], outcome['price']
-                    if -180 <= price <= 150:
-                        ledger.append({
-                            "Sport": "NFL", "Type": "Moneyline", "Target": team, "Line": "ML", "Price": price, 
-                            "Book": dk_book['title'], "Audit_Directive": "AUDIT: Check Injury Report (Active/Out)."
-                        })
-
-            # 3. TOTALS (Weather Audit)
-            elif market['key'] == 'totals':
-                for outcome in market['outcomes']:
-                    side, line, price = outcome['name'], outcome['point'], outcome['price']
-                    if -180 <= price <= 150:
-                        ledger.append({
-                            "Sport": "NFL", "Type": "Total", "Target": "Game Total", "Line": f"{side} {line}", "Price": price, 
-                            "Book": dk_book['title'], "Audit_Directive": "💨 WEATHER CHECK: Wind > 15mph? Snow?"
-                        })
-
-            # 4. PLAYER PROPS (Pass/Rush/Rec Yards)
-            elif market['key'] in ['player_pass_yds', 'player_rush_yds', 'player_reception_yds']:
-                prop_type = market['key'].replace('player_', '').replace('_yds', ' Yds').title()
-                for outcome in market['outcomes']:
-                    player, side, line, price = outcome['description'], outcome['name'], outcome['point'], outcome['price']
-                    
-                    if side == "Over" and -180 <= price <= 150:
-                        # GARBAGE TIME SHIELD (Section XXXII)
-                        if current_spread_val > 10.5:
-                            directive = "⚠️ BLOWOUT RISK: Starters may sit Q4."
-                        elif prop_type == "Pass Yds":
-                            directive = "AUDIT: Check Wind/Precip."
-                        else:
-                            directive = "V34 Prop Value."
-
-                        ledger.append({
-                            "Sport": "NFL", "Type": prop_type, "Target": player, "Line": f"Over {line}", "Price": price, 
-                            "Book": dk_book['title'], "Audit_Directive": directive
-                        })
-
-        return ledger
-
     def parse_ncaab_batch(self, games):
-        """NCAAB: WIDENED SPREADS (-7.5 to +4.5) & STRICT ODDS (MAINTAINED)."""
+        """NCAAB: WIDENED SPREADS & STRICT ODDS (PRESERVED)."""
         candidates = []
         for game in games:
             bookmakers = game.get('bookmakers', [])
             if not bookmakers: continue
             dk_book = next((b for b in bookmakers if b['key'] == 'draftkings'), bookmakers[0])
-            
             h_team, a_team = game['home_team'], game['away_team']
             time_str = format_time(game['commence_time'])
             matchup = f"{a_team} @ {h_team}"
-
             for market in dk_book.get('markets', []):
                 if market['key'] == 'spreads':
                     for outcome in market['outcomes']:
@@ -228,7 +235,7 @@ class OddsAPIEngine:
         return candidates[:12]
 
     def parse_nhl_batch(self, games):
-        """NHL: STRICT ODDS & 12-LINE CAP (MAINTAINED)."""
+        """NHL: STRICT ODDS & 12-LINE CAP (PRESERVED)."""
         raw_ledger = []
         for game in games:
             bookmakers = game.get('bookmakers', [])
@@ -306,11 +313,11 @@ def fetch_nba_stats():
 
 # --- MAIN UI ---
 def main():
-    st.sidebar.title("TITANIUM V34.14 SUPER BOWL")
+    st.sidebar.title("TITANIUM V34.15 SNIPER")
     sport = st.sidebar.selectbox("PROTOCOL SELECTION", ["NBA", "NFL", "NCAAB", "NHL"])
     
     odds_engine = OddsAPIEngine(ODDS_API_KEY)
-    st.title(f"⚡ TITANIUM V34.14 | {sport}")
+    st.title(f"⚡ TITANIUM V34.15 | {sport}")
     
     if st.button(f"EXECUTE {sport} SEQUENCE"):
         with st.spinner(f"SCANNING {sport} MARKETS (DraftKings Live Data)..."):
@@ -332,7 +339,7 @@ def main():
                                 bet['Matchup'] = matchup
                                 ledger.append(bet)
 
-            # NFL (New)
+            # NFL (Filtered)
             elif sport == "NFL":
                 events = odds_engine.fetch_events("americanfootball_nfl")
                 ledger = []
