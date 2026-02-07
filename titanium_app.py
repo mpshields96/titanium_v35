@@ -10,29 +10,28 @@ import pytz
 ODDS_API_KEY = "01dc7be6ca076e6b79ac4f54001d142d"
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="TITANIUM V34.17 LOCKED", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="TITANIUM V35.0 USER BUILD", layout="wide", page_icon="💀")
 
 # --- CSS STYLING ---
 st.markdown("""
 <style>
     .stApp {background-color: #0E1117;}
-    div.stButton > button {width: 100%; background-color: #00FF00; color: black; font-weight: bold; border: none;}
-    .metric-card {background-color: #262730; padding: 15px; border-radius: 8px; border-left: 5px solid #00FF00; margin-bottom: 10px;}
+    div.stButton > button {width: 100%; background-color: #FF0000; color: white; font-weight: bold; border: none;}
+    .metric-card {background-color: #262730; padding: 15px; border-radius: 8px; border-left: 5px solid #FF0000; margin-bottom: 10px;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- V34 CONFIG LOADER ---
+# --- V35 CONFIG LOADER (USER DEFINED) ---
 @st.cache_data
-def load_v34_protocol():
-    """Parses TITANIUM_V34_BLOAT_MASTER.json."""
-    file_path = "titanium_v34.json"
+def load_v35_protocol():
+    """Parses TITANIUM_V35.json (USER PROVIDED)."""
+    file_path = "titanium_v35.json"
     if not os.path.exists(file_path): return None
     try:
         with open(file_path, "r") as f:
             data = json.load(f)
-            if "TITANIUM_V34_BLOAT_MASTER" in data:
-                return data["TITANIUM_V34_BLOAT_MASTER"]
-            return None
+            # Returns the entire JSON payload so you can structure it however you want
+            return data 
     except: return None
 
 # --- HELPER: TIME FORMATTER ---
@@ -212,7 +211,7 @@ class OddsAPIEngine:
                         if -180 <= price <= 150:
                             if side == "Over" and line > 155.0: candidates.append({"Sport": "NCAAB", "Time": time_str, "Matchup": matchup, "Type": "Total", "Target": "Over", "Line": line, "Price": price, "Book": dk_book['title'], "Audit_Directive": "🔥 TRACK MEET."})
                             elif side == "Under" and line < 120.0: candidates.append({"Sport": "NCAAB", "Time": time_str, "Matchup": matchup, "Type": "Total", "Target": "Under", "Line": line, "Price": price, "Book": dk_book['title'], "Audit_Directive": "🧊 SLUDGE FEST."})
-        return candidates[:12]
+        return candidates
 
     def parse_nhl_batch(self, games):
         """NHL: PRESERVED."""
@@ -251,7 +250,7 @@ class OddsAPIEngine:
             if counts[bet['GameID']] == 1:
                 del bet['GameID']
                 clean_ledger.append(bet)
-        return clean_ledger[:12]
+        return clean_ledger
 
 # --- NBA STATS ENGINE ---
 @st.cache_data(ttl=3600)
@@ -293,12 +292,19 @@ def fetch_nba_stats():
 
 # --- MAIN UI ---
 def main():
-    st.sidebar.title("TITANIUM V34.17 LOCKED")
+    st.sidebar.title("TITANIUM V35.0 USER BUILD")
     sport = st.sidebar.selectbox("PROTOCOL SELECTION", ["NBA", "NFL", "NCAAB", "NHL"])
     
     odds_engine = OddsAPIEngine(ODDS_API_KEY)
-    st.title(f"⚡ TITANIUM V34.17 | {sport}")
+    st.title(f"💀 TITANIUM V35.0 | {sport}")
     
+    # Load V35 Configuration
+    v35_config = load_v35_protocol()
+    if v35_config:
+        st.sidebar.success("V35 KERNEL: ONLINE")
+    else:
+        st.sidebar.error("V35 KERNEL: MISSING")
+
     if st.button(f"EXECUTE {sport} SEQUENCE"):
         with st.spinner(f"SCANNING {sport} MARKETS (DraftKings Live Data)..."):
             
@@ -318,6 +324,8 @@ def main():
                                 bet['Time'] = time_str
                                 bet['Matchup'] = matchup
                                 ledger.append(bet)
+                # HARD CAP: TOP 20
+                ledger = ledger[:20]
 
             # NFL (Filtered & Capped)
             elif sport == "NFL":
@@ -334,18 +342,22 @@ def main():
                                 bet['Time'] = time_str
                                 bet['Matchup'] = matchup
                                 ledger.append(bet)
-                # HARD CAP FOR NFL (Regular Season Protection)
-                ledger = ledger[:40]
+                # HARD CAP: TOP 20
+                ledger = ledger[:20]
 
             # NCAAB (Strict)
             elif sport == "NCAAB":
                 raw_data = odds_engine.fetch_batch_odds("basketball_ncaab")
                 ledger = odds_engine.parse_ncaab_batch(raw_data)
+                # HARD CAP: TOP 12
+                ledger = ledger[:12]
 
             # NHL (Efficient)
             elif sport == "NHL":
                 raw_data = odds_engine.fetch_batch_odds("icehockey_nhl")
                 ledger = odds_engine.parse_nhl_batch(raw_data)
+                # HARD CAP: TOP 12
+                ledger = ledger[:12]
             
             # OUTPUT
             if ledger:
