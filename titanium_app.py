@@ -13,7 +13,7 @@ ODDS_API_KEY = "01dc7be6ca076e6b79ac4f54001d142d"  # DO NOT LEAK THIS
 # --- CONFIGURATION ---
 st.set_page_config(page_title="TITANIUM V36 OMEGA", layout="wide", page_icon="💀")
 
-# --- CSS STYLING (HOSTILE MODE) ---
+# --- CSS STYLING ---
 st.markdown("""
 <style>
     .stApp {background-color: #050505; color: #e0e0e0;}
@@ -66,7 +66,6 @@ def fetch_nba_stats():
     except: pass
     
     # 2. STATIC BUNKER (UPDATED FEB 2026)
-    # USE ONLY IF SCRAPE FAILS
     return {
         "Boston Celtics": {"NetRtg": 9.2, "Pace": 98.5, "DefRtg": 110.5},
         "Oklahoma City Thunder": {"NetRtg": 7.8, "Pace": 101.2, "DefRtg": 111.4},
@@ -120,7 +119,7 @@ def get_nba_team_stats(name, db):
         if mascot in k: return db[k]
     return None
 
-# --- THE DIVERSITY ENGINE (FILE 003 LEGACY) ---
+# --- THE DIVERSITY ENGINE ---
 def force_diversity(ledger, limit):
     """
     The Round-Robin Draft.
@@ -195,7 +194,7 @@ class OddsAPIEngine:
         if sport == "NBA": market_str += ",player_points"
         if sport == "NFL": market_str += ",player_pass_yds,player_rush_yds,player_reception_yds"
         
-        # KEY FIX: NBA/NFL have different endpoint keys
+        # NBA/NFL have different endpoint keys
         sport_key = "basketball_nba" if sport == "NBA" else "americanfootball_nfl"
         
         url = f"{self.base}/{sport_key}/events/{event_id}/odds?apiKey={self.key}&regions=us&markets={market_str}&oddsFormat=american"
@@ -220,7 +219,7 @@ class OddsAPIEngine:
                     current_spread_val = abs(line) # Capture for Blowout Shield
                     if self.collar_min <= price <= self.collar_max:
                         sort_val = 50
-                        # FILE 003 LEGACY: Key Number Boost
+                        # Key Number Boost
                         if abs(line) == 3.0 or abs(line) == 7.0: sort_val = 95
                         elif abs(line) in [2.5, 3.5, 6.5, 7.5]: sort_val = 85
                         
@@ -235,7 +234,7 @@ class OddsAPIEngine:
 
             elif market['key'] == 'totals':
                 for outcome in market['outcomes']:
-                      if -120 <= outcome['price'] <= 150:
+                     if -120 <= outcome['price'] <= 150:
                         ledger.append({"Sport": "NFL", "Type": "Total", "Target": "Game Total", "Line": f"{outcome['name']} {outcome['point']}", "Price": outcome['price'], "Book": dk_book['title'], "Audit_Directive": "💨 WEATHER.", "Sort_Val": 55})
 
             elif 'player_' in market['key']:
@@ -245,14 +244,14 @@ class OddsAPIEngine:
                     price = outcome['price']
                     side = outcome['name']
                     if self.collar_min <= price <= self.collar_max:
-                        # FILE 001 LEGACY: Volume Filters
+                        # Volume Filters
                         valid_vol = False
                         if prop_type == "Pass Yds" and line > 225.0: valid_vol = True
                         if prop_type == "Rush Yds" and line > 45.0: valid_vol = True
                         if prop_type == "Reception Yds" and line > 45.0: valid_vol = True
                         
                         if valid_vol:
-                            # FILE 001 LEGACY: Blowout Shield
+                            # Blowout Shield
                             if current_spread_val > 10.5 and side == "Over": continue 
                             
                             sort_val = 70
@@ -283,7 +282,7 @@ class OddsAPIEngine:
                     line = outcome['point']
                     price = outcome['price']
                     
-                    # FILE 002 LEGACY: NetRtg Calculation
+                    # NetRtg Calculation
                     h_sc = (h_st['NetRtg'] * (h_st['Pace']/100)) + 1.5 # Home Court
                     a_sc = (a_st['NetRtg'] * (a_st['Pace']/100))
                     proj_margin = h_sc - a_sc
@@ -302,7 +301,7 @@ class OddsAPIEngine:
                     combined_pace = h_st['Pace'] + a_st['Pace']
                     
                     if self.collar_min <= outcome['price'] <= self.collar_max:
-                        # FILE 001 LEGACY: Hard Integers
+                        # Hard Integers
                         if side == "Over" and combined_pace > 202.0:
                             sort_val = 70 + (combined_pace - 202)
                             ledger.append({"Sport": "NBA", "Type": "Total", "Target": f"{h_team}/{a_team}", "Line": f"O {line}", "Price": outcome['price'], "Book": dk_book['title'], "Audit_Directive": f"PACE ALERT: {combined_pace:.1f}.", "Sort_Val": sort_val})
@@ -315,7 +314,7 @@ class OddsAPIEngine:
                     if outcome['name'] == "Over" and outcome['point'] > 18.5 and self.collar_min <= outcome['price'] <= self.collar_max:
                         sort_val = 50
                         msg = ""
-                        # FILE 002 LEGACY: DefRtg Attack
+                        # DefRtg Attack
                         if h_st['DefRtg'] > 115: 
                             msg = f"vs {h_team} (Def {h_st['DefRtg']})"
                             sort_val = 80
@@ -337,69 +336,144 @@ class OddsAPIEngine:
             dk_book = next((b for b in bookmakers if b['key'] == 'draftkings'), bookmakers[0])
             h_team, a_team = game['home_team'], game['away_team']
             
-            # FILE 001 LEGACY: Blacklists
+            # Blacklists
             if sport == "NHL" and any(x in h_team or x in a_team for x in fade_list): continue
             
             time_str = format_time(game['commence_time'])
             matchup = f"{a_team} @ {h_team}"
             
             for market in dk_book.get('markets', []):
-                # NHL LOGIC (TITANIUM UPGRADED)
+                # NHL LOGIC (FIXED: STRICT COLLAR)
                 if sport == "NHL":
-                    if market['key'] == 'h2h':
+                    if market['key'] == 'h2h': # Moneyline
                          for outcome in market['outcomes']:
-                            # DOG HUNTING (Sharp Value)
-                            if 120 <= outcome['price'] <= 165:
-                                sort_val = 85
-                                candidates.append({"Sport": "NHL", "Time": time_str, "Matchup": matchup, "Type": "Moneyline", "Target": outcome['name'], "Line": "ML", "Price": outcome['price'], "Book": dk_book['title'], "Audit_Directive": "🐶 DOG VALUE DETECTED.", "Sort_Val": sort_val})
+                            price = outcome['price']
+                            # STRICT -180 to +150 only
+                            if self.collar_min <= price <= self.collar_max:
+                                sort_val = 60
+                                directive = "Goalie Check."
+                                # Value Logic: Slight Home Dog or Reasonable Home Fav
+                                if outcome['name'] == h_team and -140 < price < 130:
+                                    sort_val = 75
+                                    directive = "Home Ice Value."
+                                
+                                candidates.append({
+                                    "Sport": "NHL", "Time": time_str, "Matchup": matchup, 
+                                    "Type": "Moneyline", "Target": outcome['name'], "Line": "ML", 
+                                    "Price": price, "Book": dk_book['title'], 
+                                    "Audit_Directive": directive, "Sort_Val": sort_val
+                                })
                     
                     elif market['key'] == 'spreads': # Puck Line
+                        for outcome in market['outcomes']:
+                            price = outcome['price']
+                            if self.collar_min <= price <= self.collar_max:
+                                sort_val = 65
+                                directive = "PL Value."
+                                # Logic: Catching +1.5 at a reasonable price
+                                if outcome['point'] == 1.5 and price > -170:
+                                    sort_val = 80
+                                    directive = "Safety Valve PL."
+                                    
+                                candidates.append({
+                                    "Sport": "NHL", "Time": time_str, "Matchup": matchup, 
+                                    "Type": "Puck Line", "Target": outcome['name'], 
+                                    "Line": outcome['point'], "Price": price, 
+                                    "Book": dk_book['title'], "Audit_Directive": directive, 
+                                    "Sort_Val": sort_val
+                                })
+
+                # NCAAB LOGIC (FIXED: V36 MADNESS)
+                elif sport == "NCAAB":
+                    if market['key'] == 'spreads':
                         for outcome in market['outcomes']:
                             line = outcome['point']
                             price = outcome['price']
                             
-                            # THE TITANIUM SHIELD (+1.5 Underdog)
-                            if line == 1.5 and -165 <= price <= -110:
-                                sort_val = 90
-                                candidates.append({"Sport": "NHL", "Time": time_str, "Matchup": matchup, "Type": "Puck Line", "Target": outcome['name'], "Line": "+1.5", "Price": price, "Book": dk_book['title'], "Audit_Directive": "🛡️ TITANIUM PL SHIELD.", "Sort_Val": sort_val})
+                            if not (self.collar_min <= price <= self.collar_max): continue
                             
-                            # THE EMPTY NET HAMMER (-1.5 Favorite)
-                            elif line == -1.5 and 125 <= price <= 170:
-                                sort_val = 80
-                                candidates.append({"Sport": "NHL", "Time": time_str, "Matchup": matchup, "Type": "Puck Line", "Target": outcome['name'], "Line": "-1.5", "Price": price, "Book": dk_book['title'], "Audit_Directive": "🔨 EMPTY NET EQUITY.", "Sort_Val": sort_val})
+                            # Filter: Blowout Shield (CBB Specific)
+                            if abs(line) > 22.5: continue
+                            
+                            sort_val = 60
+                            audit_msg = "Std CBB Line."
+                            
+                            # STRATEGY 1: THE HOME DOG (High Value)
+                            if outcome['name'] == h_team and line > 0:
+                                sort_val = 85
+                                audit_msg = f"🐶 HOME DOG (+{line})."
+                            
+                            # STRATEGY 2: THE ROAD FAVORITE TRAP (Fade)
+                            elif outcome['name'] == a_team and -4.0 <= line < 0:
+                                sort_val = 40 # Penalty
+                                audit_msg = "⚠️ SHORT ROAD FAV (Trap risk)."
+                                
+                            # STRATEGY 3: RANKED KILLER (Proxy)
+                            elif line < -12.0 and line > -18.0:
+                                sort_val = 75
+                                audit_msg = "🔨 HEAVY FAVORITE (Talent Gap)."
 
+                            candidates.append({
+                                "Sport": "NCAAB", "Time": time_str, "Matchup": matchup, 
+                                "Type": "Spread", "Target": outcome['name'], "Line": line, 
+                                "Price": price, "Book": dk_book['title'], 
+                                "Audit_Directive": audit_msg, "Sort_Val": sort_val
+                            })
+                            
                     elif market['key'] == 'totals':
                         for outcome in market['outcomes']:
                             line = outcome['point']
+                            price = outcome['price']
                             side = outcome['name']
                             
-                            # GOALIE DUEL (Under 5.5 to 6.0)
-                            if line <= 6.0 and side == "Under" and outcome['price'] >= -115:
-                                candidates.append({"Sport": "NHL", "Time": time_str, "Matchup": matchup, "Type": "Total", "Target": f"{a_team}/{h_team}", "Line": f"U {line}", "Price": outcome['price'], "Book": dk_book['title'], "Audit_Directive": "🧊 ICE LOCK (Goalie Duel).", "Sort_Val": 88})
+                            if not (-115 <= price <= 115): continue
+                            
+                            sort_val = 55
+                            audit_msg = "Tempo Check."
+                            
+                            # STRATEGY 4: THE ROCK FIGHT (Under)
+                            if line < 128.0 and side == "Under":
+                                sort_val = 80
+                                audit_msg = f"🧱 ROCK FIGHT (<128)."
+                            
+                            # STRATEGY 5: THE TRACK MEET (Over)
+                            elif line > 160.0 and side == "Over":
+                                sort_val = 75
+                                audit_msg = f"🚀 TRACK MEET (>160)."
+                                
+                            candidates.append({
+                                "Sport": "NCAAB", "Time": time_str, "Matchup": matchup, 
+                                "Type": "Total", "Target": f"Game {side}", "Line": f"{side} {line}", 
+                                "Price": price, "Book": dk_book['title'], 
+                                "Audit_Directive": audit_msg, "Sort_Val": sort_val
+                            })
 
-                # NCAAB LOGIC (PRESERVED)
-                elif sport == "NCAAB":
-                    if market['key'] == 'spreads':
-                        for outcome in market['outcomes']:
-                            if -12.5 <= outcome['point'] <= 12.5 and self.collar_min <= outcome['price'] <= self.collar_max:
-                                sort_val = 60
-                                # FILE 002 LEGACY: Road Dog Boost
-                                if outcome['name'] == a_team and outcome['point'] > 3.0: sort_val = 90
-                                candidates.append({"Sport": "NCAAB", "Time": time_str, "Matchup": matchup, "Type": "Spread", "Target": outcome['name'], "Line": outcome['point'], "Price": outcome['price'], "Book": dk_book['title'], "Audit_Directive": "Road Dog Audit.", "Sort_Val": sort_val})
-
-                # SOCCER LOGIC (TITANIUM UPGRADED)
+                # SOCCER LOGIC (FIXED: STRICT COLLAR)
                 elif sport == "SOCCER":
                     if market['key'] == 'h2h':
                         for outcome in market['outcomes']:
-                             # THE SIGMABALE SIGNAL (Sharp Draw)
-                             if outcome['name'] == "Draw" and 210 <= outcome['price'] <= 285:
-                                sort_val = 88
-                                candidates.append({"Sport": "SOCCER", "Time": time_str, "Matchup": matchup, "Type": "3-Way", "Target": "Draw", "Line": "ML", "Price": outcome['price'], "Book": dk_book['title'], "Audit_Directive": "🤝 SIGMABALE SIGNAL (Draw).", "Sort_Val": sort_val})
-                             
-                             # THE FORTRESS (Home Dog Value)
-                             elif outcome['name'] == h_team and outcome['price'] >= 145:
-                                sort_val = 82
-                                candidates.append({"Sport": "SOCCER", "Time": time_str, "Matchup": matchup, "Type": "3-Way", "Target": outcome['name'], "Line": "ML", "Price": outcome['price'], "Book": dk_book['title'], "Audit_Directive": "🏰 FORTRESS (Home Dog).", "Sort_Val": sort_val})
+                            price = outcome['price']
+                            
+                            # STRICT -180 to +150. (This nukes most Draws)
+                            if self.collar_min <= price <= self.collar_max:
+                                sort_val = 70
+                                directive = "Lineup Audit."
+                                
+                                # If a Draw survives the collar (rare, but possible for +140ish)
+                                if outcome['name'] == "Draw":
+                                    sort_val = 85
+                                    directive = "VALUE DRAW."
+                                # If a Favorite is within range (e.g. -150)
+                                elif price < 0:
+                                    sort_val = 80
+                                    directive = "Strong Fav (In Range)."
+                                    
+                                candidates.append({
+                                    "Sport": "SOCCER", "Time": time_str, "Matchup": matchup, 
+                                    "Type": "3-Way", "Target": outcome['name'], "Line": "ML", 
+                                    "Price": price, "Book": dk_book['title'], 
+                                    "Audit_Directive": directive, "Sort_Val": sort_val
+                                })
 
         return candidates
 
