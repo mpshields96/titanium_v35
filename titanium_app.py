@@ -409,99 +409,111 @@ class OddsAPIEngine:
                                 "Audit_Directive": audit_msg, "Sort_Val": sort_val
                             })
 
-                # --- NHL LOGIC (TITANIUM V36 UPGRADE) ---
+                # --- NHL LOGIC (TITANIUM V36 DIVERSIFIED) ---
                 elif sport == "NHL":
-                    # STRATEGY 1: THE PUCK LINE FORTRESS
-                    # Math: Betting Dogs on ML is high variance. Betting Dogs +1.5 at > -175 is mathematically superior in tight checking era.
+                    # STRATEGY 1: PUCK LINE (Spread) - V36 PRIORITY
                     if market['key'] == 'spreads': 
                         for outcome in market['outcomes']:
                             price = outcome['price']
                             line = outcome['point']
-                            
-                            # TARGET: UNDERDOG PUCK LINE (+1.5)
-                            if line == 1.5 and price > -175:
-                                sort_val = 85
-                                candidates.append({
-                                    "Sport": "NHL", "Time": time_str, "Matchup": matchup, 
-                                    "Type": "Puck Line", "Target": outcome['name'], 
-                                    "Line": "+1.5", "Price": price, "Book": dk_book['title'], 
-                                    "Audit_Directive": "🛡️ PUCK LINE FORTRESS.", "Sort_Val": sort_val
-                                })
-                            # TARGET: REGULATION DOMINATION FAV (-1.5)
-                            # Only if payout is massive (> +145) to justify empty net risk
-                            elif line == -1.5 and price > 145:
-                                sort_val = 70
-                                candidates.append({
-                                    "Sport": "NHL", "Time": time_str, "Matchup": matchup, 
-                                    "Type": "Puck Line", "Target": outcome['name'], 
-                                    "Line": "-1.5", "Price": price, "Book": dk_book['title'], 
-                                    "Audit_Directive": "🔨 REGULATION CHASE.", "Sort_Val": sort_val
-                                })
+                            # COLLAR: -180 to +150
+                            if self.collar_min <= price <= self.collar_max:
+                                if line == 1.5: # +1.5 Dog
+                                    candidates.append({
+                                        "Sport": "NHL", "Type": "Puck Line", "Target": outcome['name'], 
+                                        "Line": "+1.5", "Price": price, "Book": dk_book['title'], 
+                                        "Audit_Directive": "🛡️ PL DEFENSE.", "Sort_Val": 85
+                                    })
+                                elif line == -1.5 and price > 130: # -1.5 Fav (Value Only)
+                                    candidates.append({
+                                        "Sport": "NHL", "Type": "Puck Line", "Target": outcome['name'], 
+                                        "Line": "-1.5", "Price": price, "Book": dk_book['title'], 
+                                        "Audit_Directive": "🔨 REGULATION CHASE.", "Sort_Val": 70
+                                    })
 
-                    # STRATEGY 2: MONEYLINE DISCIPLINE (STRICT COLLAR)
+                    # STRATEGY 2: TOTALS (DIVERSIFICATION)
+                    elif market['key'] == 'totals':
+                        for outcome in market['outcomes']:
+                            price = outcome['price']
+                            line = outcome['point']
+                            side = outcome['name']
+                            if self.collar_min <= price <= self.collar_max:
+                                if line <= 5.5 and side == "Under":
+                                    candidates.append({
+                                        "Sport": "NHL", "Type": "Total", "Target": "Game Total", 
+                                        "Line": f"U {line}", "Price": price, "Book": dk_book['title'], 
+                                        "Audit_Directive": "🧱 GOALIE DUEL.", "Sort_Val": 75
+                                    })
+                                elif line >= 6.5 and side == "Over":
+                                    candidates.append({
+                                        "Sport": "NHL", "Type": "Total", "Target": "Game Total", 
+                                        "Line": f"O {line}", "Price": price, "Book": dk_book['title'], 
+                                        "Audit_Directive": "🚨 BARN BURNER.", "Sort_Val": 75
+                                    })
+
+                    # STRATEGY 3: MONEYLINE (STRICT FILTER)
                     elif market['key'] == 'h2h':
                         for outcome in market['outcomes']:
                             price = outcome['price']
-                            # V36 RULE: NO JUICE WORSE THAN -155
-                            if -155 <= price <= 145: 
-                                sort_val = 60
-                                directive = "Std Value."
-                                if price > 110: 
-                                    sort_val = 75
-                                    directive = "🐶 DOG VALUE."
+                            # FILTER: No Heavy Juice (-180 max)
+                            if self.collar_min <= price <= self.collar_max:
                                 candidates.append({
-                                    "Sport": "NHL", "Time": time_str, "Matchup": matchup, 
-                                    "Type": "Moneyline", "Target": outcome['name'], "Line": "ML", 
-                                    "Price": price, "Book": dk_book['title'], 
-                                    "Audit_Directive": directive, "Sort_Val": sort_val
+                                    "Sport": "NHL", "Type": "Moneyline", "Target": outcome['name'], 
+                                    "Line": "ML", "Price": price, "Book": dk_book['title'], 
+                                    "Audit_Directive": "Std Value.", "Sort_Val": 60
                                 })
 
-                # --- SOCCER LOGIC (TITANIUM V36 UPGRADE) ---
+                # --- SOCCER LOGIC (TITANIUM V36 DIVERSIFIED) ---
                 elif sport == "SOCCER":
-                    if market['key'] == 'h2h':
-                        # STRATEGY 1: THE DRAW HUNTER
-                        # Math: Draws occur ~26% of time in top 5 leagues. Odds > +220 are +EV if defensive stats align.
-                        for outcome in market['outcomes']:
-                            price = outcome['price']
-                            if outcome['name'] == "Draw":
-                                if 210 <= price <= 290:
-                                    candidates.append({
-                                        "Sport": "SOCCER", "Time": time_str, "Matchup": matchup, 
-                                        "Type": "3-Way", "Target": "DRAW", "Line": "X", 
-                                        "Price": price, "Book": dk_book['title'], 
-                                        "Audit_Directive": "🎯 DRAW HUNTER.", "Sort_Val": 90
-                                    })
-                            else:
-                                # STRATEGY 2: FADE THE PUBLIC FAVORITE
-                                # If a favorite is > -160 (e.g. -200), DELETE IT. Use Asian Handicap instead.
-                                if -160 <= price <= 160:
-                                    candidates.append({
-                                        "Sport": "SOCCER", "Time": time_str, "Matchup": matchup, 
-                                        "Type": "3-Way", "Target": outcome['name'], "Line": "ML", 
-                                        "Price": price, "Book": dk_book['title'], 
-                                        "Audit_Directive": "⚽ 3-WAY VALUE.", "Sort_Val": 65
-                                    })
-                    
-                    # STRATEGY 3: ASIAN HANDICAP SHIELD (Use Spreads if API provides)
-                    elif market['key'] == 'spreads':
+                    # STRATEGY 1: SPREADS (Asian Handicap / Draw No Bet)
+                    if market['key'] == 'spreads':
                         for outcome in market['outcomes']:
                             price = outcome['price']
                             line = outcome['point']
                             if self.collar_min <= price <= self.collar_max:
-                                if line == 0.0: # Draw No Bet equivalent
+                                if line == 0.0:
                                     candidates.append({
-                                        "Sport": "SOCCER", "Time": time_str, "Matchup": matchup, 
-                                        "Type": "Spread", "Target": outcome['name'], "Line": "PK", 
-                                        "Price": price, "Book": dk_book['title'], 
-                                        "Audit_Directive": "🛡️ DRAW NO BET (PK).", "Sort_Val": 80
+                                        "Sport": "SOCCER", "Type": "Spread", "Target": outcome['name'], 
+                                        "Line": "PK", "Price": price, "Book": dk_book['title'], 
+                                        "Audit_Directive": "🛡️ DNB (Draw Refund).", "Sort_Val": 80
                                     })
-                                elif line == 0.5 and price < -120: # Double Chance equivalent
+                                elif line == 0.5: # Double Chance
                                     candidates.append({
-                                        "Sport": "SOCCER", "Time": time_str, "Matchup": matchup, 
-                                        "Type": "Spread", "Target": outcome['name'], "Line": "+0.5", 
-                                        "Price": price, "Book": dk_book['title'], 
+                                        "Sport": "SOCCER", "Type": "Spread", "Target": outcome['name'], 
+                                        "Line": "+0.5", "Price": price, "Book": dk_book['title'], 
                                         "Audit_Directive": "🛡️ DOUBLE CHANCE.", "Sort_Val": 75
                                     })
+                    
+                    # STRATEGY 2: TOTALS (DIVERSIFICATION)
+                    elif market['key'] == 'totals':
+                        for outcome in market['outcomes']:
+                            price = outcome['price']
+                            line = outcome['point']
+                            side = outcome['name']
+                            if self.collar_min <= price <= self.collar_max:
+                                if side == "Under" and line <= 2.5:
+                                    candidates.append({
+                                        "Sport": "SOCCER", "Type": "Total", "Target": "Game Total", 
+                                        "Line": f"U {line}", "Price": price, "Book": dk_book['title'], 
+                                        "Audit_Directive": "🔒 DEFENSIVE GRIND.", "Sort_Val": 70
+                                    })
+                                elif side == "Over" and line >= 2.5:
+                                    candidates.append({
+                                        "Sport": "SOCCER", "Type": "Total", "Target": "Game Total", 
+                                        "Line": f"O {line}", "Price": price, "Book": dk_book['title'], 
+                                        "Audit_Directive": "⚽ GOAL FEST.", "Sort_Val": 70
+                                    })
+
+                    # STRATEGY 3: 3-WAY ML (Deep Value Only)
+                    elif market['key'] == 'h2h':
+                        for outcome in market['outcomes']:
+                            price = outcome['price']
+                            if self.collar_min <= price <= self.collar_max:
+                                candidates.append({
+                                    "Sport": "SOCCER", "Type": "3-Way", "Target": outcome['name'], 
+                                    "Line": "ML", "Price": price, "Book": dk_book['title'], 
+                                    "Audit_Directive": "Standard 3-Way.", "Sort_Val": 60
+                                })
 
         return candidates
 
