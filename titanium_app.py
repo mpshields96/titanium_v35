@@ -234,7 +234,7 @@ class OddsAPIEngine:
 
             elif market['key'] == 'totals':
                 for outcome in market['outcomes']:
-                     if -120 <= outcome['price'] <= 150:
+                      if -120 <= outcome['price'] <= 150:
                         ledger.append({"Sport": "NFL", "Type": "Total", "Target": "Game Total", "Line": f"{outcome['name']} {outcome['point']}", "Price": outcome['price'], "Book": dk_book['title'], "Audit_Directive": "💨 WEATHER.", "Sort_Val": 55})
 
             elif 'player_' in market['key']:
@@ -343,48 +343,9 @@ class OddsAPIEngine:
             matchup = f"{a_team} @ {h_team}"
             
             for market in dk_book.get('markets', []):
-                # NHL LOGIC (FIXED: STRICT COLLAR)
-                if sport == "NHL":
-                    if market['key'] == 'h2h': # Moneyline
-                         for outcome in market['outcomes']:
-                            price = outcome['price']
-                            # STRICT -180 to +150 only
-                            if self.collar_min <= price <= self.collar_max:
-                                sort_val = 60
-                                directive = "Goalie Check."
-                                # Value Logic: Slight Home Dog or Reasonable Home Fav
-                                if outcome['name'] == h_team and -140 < price < 130:
-                                    sort_val = 75
-                                    directive = "Home Ice Value."
-                                
-                                candidates.append({
-                                    "Sport": "NHL", "Time": time_str, "Matchup": matchup, 
-                                    "Type": "Moneyline", "Target": outcome['name'], "Line": "ML", 
-                                    "Price": price, "Book": dk_book['title'], 
-                                    "Audit_Directive": directive, "Sort_Val": sort_val
-                                })
-                    
-                    elif market['key'] == 'spreads': # Puck Line
-                        for outcome in market['outcomes']:
-                            price = outcome['price']
-                            if self.collar_min <= price <= self.collar_max:
-                                sort_val = 65
-                                directive = "PL Value."
-                                # Logic: Catching +1.5 at a reasonable price
-                                if outcome['point'] == 1.5 and price > -170:
-                                    sort_val = 80
-                                    directive = "Safety Valve PL."
-                                    
-                                candidates.append({
-                                    "Sport": "NHL", "Time": time_str, "Matchup": matchup, 
-                                    "Type": "Puck Line", "Target": outcome['name'], 
-                                    "Line": outcome['point'], "Price": price, 
-                                    "Book": dk_book['title'], "Audit_Directive": directive, 
-                                    "Sort_Val": sort_val
-                                })
-
-                # NCAAB LOGIC (FIXED: V36 MADNESS)
-                elif sport == "NCAAB":
+                
+                # --- NCAAB LOGIC (PRESERVED BYTE-FOR-BYTE) ---
+                if sport == "NCAAB":
                     if market['key'] == 'spreads':
                         for outcome in market['outcomes']:
                             line = outcome['point']
@@ -448,32 +409,99 @@ class OddsAPIEngine:
                                 "Audit_Directive": audit_msg, "Sort_Val": sort_val
                             })
 
-                # SOCCER LOGIC (FIXED: STRICT COLLAR)
-                elif sport == "SOCCER":
-                    if market['key'] == 'h2h':
+                # --- NHL LOGIC (TITANIUM V36 UPGRADE) ---
+                elif sport == "NHL":
+                    # STRATEGY 1: THE PUCK LINE FORTRESS
+                    # Math: Betting Dogs on ML is high variance. Betting Dogs +1.5 at > -175 is mathematically superior in tight checking era.
+                    if market['key'] == 'spreads': 
                         for outcome in market['outcomes']:
                             price = outcome['price']
+                            line = outcome['point']
                             
-                            # STRICT -180 to +150. (This nukes most Draws)
-                            if self.collar_min <= price <= self.collar_max:
-                                sort_val = 70
-                                directive = "Lineup Audit."
-                                
-                                # If a Draw survives the collar (rare, but possible for +140ish)
-                                if outcome['name'] == "Draw":
-                                    sort_val = 85
-                                    directive = "VALUE DRAW."
-                                # If a Favorite is within range (e.g. -150)
-                                elif price < 0:
-                                    sort_val = 80
-                                    directive = "Strong Fav (In Range)."
-                                    
+                            # TARGET: UNDERDOG PUCK LINE (+1.5)
+                            if line == 1.5 and price > -175:
+                                sort_val = 85
                                 candidates.append({
-                                    "Sport": "SOCCER", "Time": time_str, "Matchup": matchup, 
-                                    "Type": "3-Way", "Target": outcome['name'], "Line": "ML", 
+                                    "Sport": "NHL", "Time": time_str, "Matchup": matchup, 
+                                    "Type": "Puck Line", "Target": outcome['name'], 
+                                    "Line": "+1.5", "Price": price, "Book": dk_book['title'], 
+                                    "Audit_Directive": "🛡️ PUCK LINE FORTRESS.", "Sort_Val": sort_val
+                                })
+                            # TARGET: REGULATION DOMINATION FAV (-1.5)
+                            # Only if payout is massive (> +145) to justify empty net risk
+                            elif line == -1.5 and price > 145:
+                                sort_val = 70
+                                candidates.append({
+                                    "Sport": "NHL", "Time": time_str, "Matchup": matchup, 
+                                    "Type": "Puck Line", "Target": outcome['name'], 
+                                    "Line": "-1.5", "Price": price, "Book": dk_book['title'], 
+                                    "Audit_Directive": "🔨 REGULATION CHASE.", "Sort_Val": sort_val
+                                })
+
+                    # STRATEGY 2: MONEYLINE DISCIPLINE (STRICT COLLAR)
+                    elif market['key'] == 'h2h':
+                        for outcome in market['outcomes']:
+                            price = outcome['price']
+                            # V36 RULE: NO JUICE WORSE THAN -155
+                            if -155 <= price <= 145: 
+                                sort_val = 60
+                                directive = "Std Value."
+                                if price > 110: 
+                                    sort_val = 75
+                                    directive = "🐶 DOG VALUE."
+                                candidates.append({
+                                    "Sport": "NHL", "Time": time_str, "Matchup": matchup, 
+                                    "Type": "Moneyline", "Target": outcome['name'], "Line": "ML", 
                                     "Price": price, "Book": dk_book['title'], 
                                     "Audit_Directive": directive, "Sort_Val": sort_val
                                 })
+
+                # --- SOCCER LOGIC (TITANIUM V36 UPGRADE) ---
+                elif sport == "SOCCER":
+                    if market['key'] == 'h2h':
+                        # STRATEGY 1: THE DRAW HUNTER
+                        # Math: Draws occur ~26% of time in top 5 leagues. Odds > +220 are +EV if defensive stats align.
+                        for outcome in market['outcomes']:
+                            price = outcome['price']
+                            if outcome['name'] == "Draw":
+                                if 210 <= price <= 290:
+                                    candidates.append({
+                                        "Sport": "SOCCER", "Time": time_str, "Matchup": matchup, 
+                                        "Type": "3-Way", "Target": "DRAW", "Line": "X", 
+                                        "Price": price, "Book": dk_book['title'], 
+                                        "Audit_Directive": "🎯 DRAW HUNTER.", "Sort_Val": 90
+                                    })
+                            else:
+                                # STRATEGY 2: FADE THE PUBLIC FAVORITE
+                                # If a favorite is > -160 (e.g. -200), DELETE IT. Use Asian Handicap instead.
+                                if -160 <= price <= 160:
+                                    candidates.append({
+                                        "Sport": "SOCCER", "Time": time_str, "Matchup": matchup, 
+                                        "Type": "3-Way", "Target": outcome['name'], "Line": "ML", 
+                                        "Price": price, "Book": dk_book['title'], 
+                                        "Audit_Directive": "⚽ 3-WAY VALUE.", "Sort_Val": 65
+                                    })
+                    
+                    # STRATEGY 3: ASIAN HANDICAP SHIELD (Use Spreads if API provides)
+                    elif market['key'] == 'spreads':
+                        for outcome in market['outcomes']:
+                            price = outcome['price']
+                            line = outcome['point']
+                            if self.collar_min <= price <= self.collar_max:
+                                if line == 0.0: # Draw No Bet equivalent
+                                    candidates.append({
+                                        "Sport": "SOCCER", "Time": time_str, "Matchup": matchup, 
+                                        "Type": "Spread", "Target": outcome['name'], "Line": "PK", 
+                                        "Price": price, "Book": dk_book['title'], 
+                                        "Audit_Directive": "🛡️ DRAW NO BET (PK).", "Sort_Val": 80
+                                    })
+                                elif line == 0.5 and price < -120: # Double Chance equivalent
+                                    candidates.append({
+                                        "Sport": "SOCCER", "Time": time_str, "Matchup": matchup, 
+                                        "Type": "Spread", "Target": outcome['name'], "Line": "+0.5", 
+                                        "Price": price, "Book": dk_book['title'], 
+                                        "Audit_Directive": "🛡️ DOUBLE CHANCE.", "Sort_Val": 75
+                                    })
 
         return candidates
 
